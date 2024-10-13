@@ -23,16 +23,16 @@ To retarget images, use the following commands:
 python PruneRepaint.py  --target_ratio "4/3" --save_image_path "/path/to/save/" --input_image_path "/path/to/original/images/"
 ```
 
-
+<!--```
 ## Citation
 If PruneRepaint is helpful for your research, please cite the following paper:
-```
 @article{shen2024prunerepaint,
       title={Prune and Repaint: Content-Aware Image Retargeting for any Ratio}, 
       author={Feihong Shen, Chao Li, Yifeng Geng, Yongjian Deng and Hao Chen},
       year={2024}
 }
 ```
+-->
 
 
 
