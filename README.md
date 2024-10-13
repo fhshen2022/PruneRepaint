@@ -9,7 +9,7 @@
 PruneRepaint is an image retargeting method that introduces high-level semantic information and  low-level structural prior to the retargeting process. This repository contains the code of PruneRepaint for retargeting an image to any aspect ratio. For more information, please refer to our paper.
 
 <p align="center">
-  <img src="./assets/PruneRepaint.png" width="700" />
+  <img src="./assets/PruneRepaint.jpg" width="700" />
 </p>
 
 
