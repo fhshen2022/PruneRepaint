@@ -38,6 +38,6 @@ If PruneRepaint is helpful for your research, please cite the following paper:
 
 ## Acknowledgment
 
-This project is based on Stable Diffusion([paper](https://openaccess.thecvf.com/content/CVPR2022/papers/Rombach_High-Resolution_Image_Synthesis_With_Latent_Diffusion_Models_CVPR_2022_paper.pdf), [code](https://github.com/CompVis/latent-diffusion)), IP-Adapter ([paper](https://arxiv.org/abs/2308.06721), [code](https://github.com/tencent-ailab/IP-Adapter)), ControlNet ([paper](https://arxiv.org/abs/2302.05543), [code](https://github.com/lllyasviel/ControlNet)), VST ([paper](https://arxiv.org/abs/2104.12099), [code](https://github.com/nnizhang/VST)) and SeamCarving ([paper](https://dl.acm.org/doi/10.1145/1276377.1276390)),
+This project is based on Stable Diffusion([paper](https://arxiv.org/abs/2112.10752), [code](https://github.com/CompVis/latent-diffusion)), IP-Adapter ([paper](https://arxiv.org/abs/2308.06721), [code](https://github.com/tencent-ailab/IP-Adapter)), ControlNet ([paper](https://arxiv.org/abs/2302.05543), [code](https://github.com/lllyasviel/ControlNet)), VST ([paper](https://arxiv.org/abs/2104.12099), [code](https://github.com/nnizhang/VST)) and SeamCarving ([paper](https://dl.acm.org/doi/10.1145/1276377.1276390)),
  thanks for their excellent works.
 
