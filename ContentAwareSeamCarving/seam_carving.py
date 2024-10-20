@@ -210,31 +210,6 @@ def _get_seams(
         )
 
 
-def _reduce_width(
-    src: np.ndarray,
-    delta_width: int,
-    energy_mode: str,
-    aux_energy: Optional[np.ndarray],
-) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Reduce the width of image by delta_width pixels"""
-    assert src.ndim in (2, 3) and delta_width >= 0
-    if src.ndim == 2:
-        gray = src
-        src_h, src_w = src.shape
-        dst_shape: Tuple[int, ...] = (src_h, src_w - delta_width)
-    else:
-        gray = _rgb2gray(src)
-        src_h, src_w, src_c = src.shape
-        dst_shape = (src_h, src_w - delta_width, src_c)
-
-    to_keep = ~_get_seams(gray, delta_width, energy_mode, aux_energy)
-    #to_delete = _get_seams(gray, delta_width, energy_mode, aux_energy)
-    #to_delete = src[to_delete].reshape()
-    dst = src[to_keep].reshape(dst_shape)
-    if aux_energy is not None:
-        aux_energy = aux_energy[to_keep].reshape(dst_shape[:2])
-    return dst, aux_energy#, to_delete
-
 
 @nb.njit(
     nb.float32[:, :, :](nb.float32[:, :, :], nb.boolean[:, :], nb.int32), cache=True
@@ -295,27 +270,6 @@ def _expand_width(
     return dst, aux_energy
 
 
-def _resize_width(
-    src: np.ndarray,
-    width: int,
-    energy_mode: str,
-    aux_energy: Optional[np.ndarray],
-    step_ratio: float,
-) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Resize the width of image by removing vertical seams"""
-    assert src.size > 0 and src.ndim in (2, 3)
-    assert width > 0
-
-    src_w = src.shape[1]
-    if src_w < width:
-        dst, aux_energy = _expand_width(
-            src, width - src_w, energy_mode, aux_energy, step_ratio
-        )
-    else:
-        dst, aux_energy = _reduce_width(src, src_w - width, energy_mode, aux_energy)
-    return dst, aux_energy
-
-
 def _transpose_image(src: np.ndarray) -> np.ndarray:
     """Transpose a source image in rgb or grayscale format"""
     if src.ndim == 3:
@@ -325,34 +279,6 @@ def _transpose_image(src: np.ndarray) -> np.ndarray:
     return dst
 
 
-def _resize_height(
-    src: np.ndarray,
-    height: int,
-    energy_mode: str,
-    aux_energy: Optional[np.ndarray],
-    step_ratio: float,
-) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Resize the height of image by removing horizontal seams"""
-    assert src.ndim in (2, 3) and height > 0
-    if aux_energy is not None:
-        aux_energy = aux_energy.T
-    src = _transpose_image(src)
-    src, aux_energy  = _resize_width(src, height, energy_mode, aux_energy, step_ratio)
-    src = _transpose_image(src)
-    if aux_energy is not None:
-        aux_energy = aux_energy.T
-    return src, aux_energy  
-
-def _check_mask(mask: np.ndarray, shape: Tuple[int, ...]) -> np.ndarray:
-    """Ensure the mask to be a 2D grayscale map of specific shape"""
-    mask = np.asarray(mask, dtype=bool)
-    if mask.ndim != 2:
-        raise ValueError(f"expect mask to be a 2d binary map, got shape {mask.shape}")
-    if mask.shape != shape:
-        raise ValueError(
-            f"expect the shape of mask to match the image, got {mask.shape} vs {shape}"
-        )
-    return mask
 
 
 def _check_src(src: np.ndarray) -> np.ndarray:
@@ -365,147 +291,9 @@ def _check_src(src: np.ndarray) -> np.ndarray:
     return src
 
 
-def resize(
-    src: np.ndarray,
-    size: Optional[Tuple[int, int]] = None,
-    energy_mode: str = "backward",
-    order: str = "width-first",
-    keep_mask: Optional[np.ndarray] = None,
-    drop_mask: Optional[np.ndarray] = None,
-    aux_energy_rate: Optional[np.ndarray] = None,
-    step_ratio: float = 0.5,
-) -> np.ndarray:
-    """Resize the image using the content-aware seam-carving algorithm.
-
-    :param src: A source image in RGB or grayscale format.
-    :param size: The target size in pixels, as a 2-tuple (width, height).
-    :param energy_mode: Policy to compute energy for the source image. Could be
-        one of ``backward`` or ``forward``. If ``backward``, compute the energy
-        as the gradient at each pixel. If ``forward``, compute the energy as the
-        distances between adjacent pixels after each pixel is removed.
-    :param order: The order to remove horizontal and vertical seams. Could be
-        one of ``width-first`` or ``height-first``. In ``width-first`` mode, we
-        remove or insert all vertical seams first, then the horizontal ones,
-        while ``height-first`` is the opposite.
-    :param keep_mask: An optional mask where the foreground is protected from
-        seam removal. If not specified, no area will be protected.
-    :param drop_mask: An optional binary object mask to remove. If given, the
-        object will be removed before resizing the image to the target size.
-    :param step_ratio: The maximum size expansion ratio in one seam carving step.
-        The image will be expanded in multiple steps if target size is too large.
-    :return: A resized copy of the source image.
-    """
-    src = _check_src(src)
-
-    if order not in _list_enum(OrderMode):
-        raise ValueError(
-            f"expect order to be one of {_list_enum(OrderMode)}, got {order}"
-        )
-
-    aux_energy = None
-
-    if keep_mask is not None:
-        keep_mask = _check_mask(keep_mask, src.shape[:2])
-
-        aux_energy = np.zeros(src.shape[:2], dtype=np.float32)
-        aux_energy[keep_mask] += KEEP_MASK_ENERGY
-
-    # remove object if `drop_mask` is given
-    if drop_mask is not None:
-        drop_mask = _check_mask(drop_mask, src.shape[:2])
-
-        if aux_energy is None:
-            aux_energy = np.zeros(src.shape[:2], dtype=np.float32)
-        aux_energy[drop_mask] -= DROP_MASK_ENERGY
-
-        if order == OrderMode.HEIGHT_FIRST:
-            src = _transpose_image(src)
-            aux_energy = aux_energy.T
-
-        num_seams = (aux_energy < 0).sum(1).max()
-        while num_seams > 0:
-            src, aux_energy = _reduce_width(src, num_seams, energy_mode, aux_energy)
-            num_seams = (aux_energy < 0).sum(1).max()
-
-        if order == OrderMode.HEIGHT_FIRST:
-            src = _transpose_image(src)
-            aux_energy = aux_energy.T
-    
-    if aux_energy_rate is not None:
-        aux_energy = aux_energy_rate*my_KEEP_MASK_ENERGY
-    
-    # resize image if `size` is given
-    if size is not None:
-        width, height = size
-        width = round(width)
-        height = round(height)
-        if width <= 0 or height <= 0:
-            raise ValueError(f"expect target size to be positive, got {size}")
-
-        if order == OrderMode.WIDTH_FIRST:
-            src, aux_energy = _resize_width(
-                src, width, energy_mode, aux_energy, step_ratio
-            )
-            src, aux_energy = _resize_height(
-                src, height, energy_mode, aux_energy, step_ratio
-            )
-        else:
-            src, aux_energy = _resize_height(
-                src, height, energy_mode, aux_energy, step_ratio
-            )
-            src, aux_energy = _resize_width(
-                src, width, energy_mode, aux_energy, step_ratio
-            )
-
-    return src
-    
 
 
-
-def remove_object(
-    src: np.ndarray, drop_mask: np.ndarray, keep_mask: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """Remove an object on the source image.
-
-    :param src: A source image in RGB or grayscale format.
-    :param drop_mask: A binary object mask to remove.
-    :param keep_mask: An optional binary object mask to be protected from
-        removal. If not specified, no area is protected.
-    :return: A copy of the source image where the drop_mask is removed.
-    """
-    warnings.warn(
-        "`remove_object` is deprecated in favor of `resize(src, drop_mask=mask)`, and will be removed in the next version of seam-carving",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    src = _check_src(src)
-
-    drop_mask = _check_mask(drop_mask, src.shape[:2])
-
-    if keep_mask is not None:
-        keep_mask = _check_mask(keep_mask, src.shape[:2])
-
-    gray = src if src.ndim == 2 else _rgb2gray(src)
-
-    while drop_mask.any():
-        energy = _get_energy(gray)
-        energy[drop_mask] -= DROP_MASK_ENERGY
-        if keep_mask is not None:
-            energy[keep_mask] += KEEP_MASK_ENERGY
-        seam = _get_backward_seam(energy)
-        seam_mask = _get_seam_mask(src, seam)
-        gray = _remove_seam_mask(gray, seam_mask)
-        drop_mask = _remove_seam_mask(drop_mask, seam_mask)
-        src = _remove_seam_mask(src, seam_mask)
-        if keep_mask is not None:
-            keep_mask = _remove_seam_mask(keep_mask, seam_mask)
-
-    return src
-
-
-
-def _reduce_width2(
+def _reduce_width(
     src: np.ndarray,
     delta_width: int,
     energy_mode: str,
@@ -535,7 +323,7 @@ def _reduce_width2(
     return dst, aux_energy, to_delete
 
 
-def _resize_width2(
+def content_aware_resize_width(
     src: np.ndarray,
     width: int,
     energy_mode: str,
@@ -552,12 +340,12 @@ def _resize_width2(
             src, width - src_w, energy_mode, aux_energy, step_ratio
         )
     else:
-        dst, aux_energy, to_delete = _reduce_width2(src, src_w - width, energy_mode, aux_energy)
+        dst, aux_energy, to_delete = _reduce_width(src, src_w - width, energy_mode, aux_energy)
     #print(to_delete)
     return dst, aux_energy, to_delete
 
 
-def _resize_height2(
+def content_aware_resize_height(
     src: np.ndarray,
     height: int,
     energy_mode: str,
@@ -569,7 +357,7 @@ def _resize_height2(
     if aux_energy is not None:
         aux_energy = aux_energy.T
     src = _transpose_image(src)
-    src, aux_energy,to_delete = _resize_width2(src, height, energy_mode, aux_energy, step_ratio)
+    src, aux_energy,to_delete = content_aware_resize_width(src, height, energy_mode, aux_energy, step_ratio)
     src = _transpose_image(src)
     if aux_energy is not None:
         aux_energy = aux_energy.T
@@ -610,11 +398,11 @@ def highlight_deleted_seam(
 
         if order == OrderMode.WIDTH_FIRST:
             
-            src, aux_energy,to_delete = _resize_width2(
+            src, aux_energy,to_delete = content_aware_resize_width(
                 src, width, energy_mode, aux_energy, step_ratio
             )
             '''
-            src, aux_energy,to_delete2 = _resize_height2(
+            src, aux_energy,to_delete2 = content_aware_resize_height(
                 src, height, energy_mode, aux_energy, step_ratio
             )
             '''
