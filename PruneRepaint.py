@@ -10,9 +10,9 @@ import torch.nn.functional as F
 from RGB_VST.Models.ImageDepthNet import ImageDepthNet
 import argparse
 from diffusers import DDIMScheduler, AutoencoderKL,StableDiffusionControlNetInpaintPipeline, ControlNetModel
-#from diffusers.pipelines.controlnet import MultiControlNetModel
 from IP_Adapter.ip_adapter import IPAdapter,IPAdapterPlus
 import os
+from collections import OrderedDict
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 
@@ -20,71 +20,70 @@ parser = argparse.ArgumentParser()
 
 
 parser.add_argument('--target_ratio', default="4/3", type=str, help='target retargeted aspect ratio')
-parser.add_argument('--save_image_path', default=".//output//retargeted_results//retargetme_4_3//", type=str, help='path to save retargeted images')
-parser.add_argument('--input_image_path', default=".//input//retargetme//", type=str, help='path to input images')
-parser.add_argument('--save_saliency_path', default=".//output//saliency//", type=str, help='path to save saliency')
+parser.add_argument('--save_image_path', default="./output/retargeted_results/retargetme_4_3/", type=str, help='path to save retargeted images')
+parser.add_argument('--input_image_path', default="./input/retargetme/", type=str, help='path to input images')
+parser.add_argument('--save_saliency_path', default="./output/saliency/", type=str, help='path to save saliency')
+parser.add_argument('--img_size', default=224, type=int, help='slaiency detection network input size')
+parser.add_argument('--pretrained_model', default='./RGB_VST/pretrained_model/80.7_T2T_ViT_t_14.pth.tar', type=str, help='load pretrained salient detection backbones')
+parser.add_argument('--save_model_dir', default='./RGB_VST/checkpoint/', type=str, help='load pretrained salient detection models')
 
-####saliency detection 
-parser.add_argument('--img_size', default=224, type=int, help='network input size')
-parser.add_argument('--pretrained_model', default='./RGB_VST/pretrained_model/80.7_T2T_ViT_t_14.pth.tar', type=str, help='load Pretrained model')
-parser.add_argument('--save_model_dir', default='./RGB_VST/checkpoint/', type=str, help='save model path')
+parser.add_argument('--ip_path', default="./IP_Adapter/", type=str, help='path to ip adapter folder')
+parser.add_argument('--sd_path', default="runwayml/stable-diffusion-v1-5", type=str, help='path to save sd')
+parser.add_argument('--vae_path', default="stabilityai/sd-vae-ft-mse", type=str, help='path to vae')
+parser.add_argument('--image_encoder_path', default="models/image_encoder/", type=str, help='path to image encoder')
+parser.add_argument('--ip_ckpt', default="models/ip-adapter-plus_sd15.bin", type=str, help='path to ip adapter')
+parser.add_argument('--controlnet_path', default="lllyasviel/control_v11p_sd15_inpaint", type=str, help='path to controlnet')
 
+parser.add_argument('--side_out_path', default="./output/tmp_out/", type=str, help='path to temporal output')
+parser.add_argument('--csc_out_path', default="seamcarving/", type=str, help='path to content aware seam carving output')
+parser.add_argument('--mask_out_path', default="mask_images/", type=str, help='path to seam mask')
 
-
-#parser.add_argument('--Testing', default=True, type=bool, help='Testing or not')
 args = parser.parse_args()
 #args = parser.parse_known_args()[0]
-saliency_net = ImageDepthNet(args).cuda()
-
-# load model (multi-gpu)
-model_path = args.save_model_dir + 'RGB_VST.pth'
-state_dict = torch.load(model_path)
-from collections import OrderedDict
-
-new_state_dict = OrderedDict()
-for k, v in state_dict.items():
-    name = k[7:]  # remove `module.`
-    new_state_dict[name] = v
-# load params
-saliency_net.load_state_dict(new_state_dict)
-print('Model loaded from {}'.format(model_path))
 
 
-
+# super parameters
 numerator, demoninator = map(int,args.target_ratio.split('/'))
 target_ratio = numerator/demoninator
 save_path = args.save_image_path
-cut_saliency_ratio_w = 0.5 if target_ratio>4/3 else 0.3#横向最多允许丢失0.3的显著性；当比例过于极端时允许丢失0.5
+cut_saliency_ratio_w = 0.5 if target_ratio>4/3 else 0.3#横向最多允许丢失0.3的显著性区域；当比例过于极端时允许丢失0.5。
 cut_saliency_ratio_h = 0.1 if target_ratio>4/3 else 0.05
-
 if not os.path.exists(save_path):
     os.mkdir(save_path)
+if not os.path.exists(args.side_out_path):
+    os.mkdir(args.side_out_path)
+if not os.path.exists(args.side_out_path+args.csc_out_path):
+    os.mkdir(args.side_out_path+args.csc_out_path)
+if not os.path.exists(args.side_out_path+args.mask_out_path):
+    os.mkdir(args.side_out_path+args.mask_out_path)
 
-#######read dataset#########
+#read data
 image_file = args.input_image_path
 saliency_path = args.save_saliency_path
 image_name_list = os.listdir(image_file)
 
 
+# load saliency detection model (multi-gpu)
+saliency_net = ImageDepthNet(args).cuda()
+model_path = args.save_model_dir + 'RGB_VST.pth'
+state_dict = torch.load(model_path)
+new_state_dict = OrderedDict()
+for k, v in state_dict.items():
+    name = k[7:]  # remove `module.`
+    new_state_dict[name] = v
+saliency_net.load_state_dict(new_state_dict)
+print('Salient Detection Model loaded from {}'.format(model_path))
+
 
 ########load AR##########
-ip_path = './IP_Adapter/'
-base_model_path = "runwayml/stable-diffusion-v1-5"
-vae_model_path = "stabilityai/sd-vae-ft-mse"
-image_encoder_path = "models/image_encoder/"
-ip_ckpt = "models/ip-adapter-plus_sd15.bin"
+ip_path = args.ip_path
+base_model_path = args.sd_path
+vae_model_path = args.vae_path
+image_encoder_path = args.image_encoder_path
+ip_ckpt = args.ip_ckpt
+inpaint_controlnet_model_path = args.controlnet_path
 device = "cuda"
 
-def image_grid(imgs, rows, cols):
-    assert len(imgs) == rows*cols
-
-    w, h = imgs[0].size
-    grid = Image.new('RGB', size=(cols*w, rows*h))
-    grid_w, grid_h = grid.size
-    
-    for i, img in enumerate(imgs):
-        grid.paste(img, box=(i%cols*w, i//cols*h))
-    return grid
 
 noise_scheduler = DDIMScheduler(
     num_train_timesteps=1000,
@@ -98,7 +97,6 @@ noise_scheduler = DDIMScheduler(
 vae = AutoencoderKL.from_pretrained(ip_path+vae_model_path).to(dtype=torch.float16)
 
 # load SD Inpainting pipe
-inpaint_controlnet_model_path = "lllyasviel/control_v11p_sd15_inpaint"
 inpaint_controlnet = ControlNetModel.from_pretrained(ip_path+inpaint_controlnet_model_path, torch_dtype=torch.float16)
 
 torch.cuda.empty_cache()
@@ -111,7 +109,6 @@ pipe = StableDiffusionControlNetInpaintPipeline.from_pretrained(
 ).to(device)
 
 # load ip-adapter
-
 #ip_model = IPAdapter(pipe, image_encoder_path, ip_ckpt, device)
 ip_model = IPAdapterPlus(pipe, ip_path+image_encoder_path, ip_path+ip_ckpt, device, num_tokens=16)
 
@@ -133,9 +130,7 @@ def make_inpaint_condition(image, image_mask):
 
 
 
-
-
-transform1 = transforms.Compose([transforms.Resize((224,224)),
+transform_to_sod = transforms.Compose([transforms.Resize((224,224)),
                                  transforms.ToTensor(),
                                  transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
                                 ])
@@ -143,13 +138,11 @@ transform1 = transforms.Compose([transforms.Resize((224,224)),
 start_time = time.time()
 for img_name in image_name_list:
     image_name = img_name[:-4]
-    #if not image_name=='0352':
-    #    continue
+    print(image_name)
     img = Image.open(image_file+image_name+'.png').convert('RGB')
-    #img.show()
     W,H = (img.size)
-    transform2 = transforms.Compose([transforms.ToPILImage(),transforms.Resize((H, W))])
-    img_tensor = transform1(img).unsqueeze(0).cuda()
+    transform_back = transforms.Compose([transforms.ToPILImage(),transforms.Resize((H, W))])
+    img_tensor = transform_to_sod(img).unsqueeze(0).cuda()
     img_tensor = Variable(img_tensor)
     
     output_saliency, _ = saliency_net(img_tensor)
@@ -157,18 +150,14 @@ for img_name in image_name_list:
     saliency = F.sigmoid(saliency)
     saliency_image = saliency[0].cpu().squeeze(0)
     
-    saliency_image = transform2(saliency_image)
+    saliency_image = transform_back(saliency_image)
     saliency_image.save(saliency_path+img_name)
     saliency = Image.open(saliency_path+image_name+'.png')
     saliency = np.array(saliency)
     saliency_threshold = np.mean(saliency)
     saliency = np.where(saliency>saliency_threshold,saliency,0).astype(np.float32)
     
-    #saliency_energy_1
-    #kernel = np.ones((40,40))
-    #saliency_energy = scipy.signal.convolve2d(saliency,kernel,'same')
-    
-    #saliency_energy_2
+    #saliency_energy
     saliency_energy = np.zeros(saliency.shape)
     points_h = []
     points_w = []
@@ -187,12 +176,9 @@ for img_name in image_name_list:
                     saliency_energy[i][j] = saliency[i][j]*(1-abs(j-center_w)/saliency.shape[1])#spacial prior
                 saliency_energy[i][j] = saliency_energy[i][j] if saliency_energy[i][j]>25.5 else 25.5
     
-    
+    # extra_energy to assist canny energy to determine the importance area
     extra_energy = torch.ones([H,W]).cuda()
-
-   
     extra_energy = extra_energy.cpu().numpy()
-    
     extra_energy = extra_energy+5*(saliency_energy/255)
     extra_energy=extra_energy.astype(np.float32)
     
@@ -201,16 +187,10 @@ for img_name in image_name_list:
     count_saliency = np.where(saliency>saliency_threshold,1,0).astype(np.float32)
     (h,w) = count_saliency.shape
     final_cut_saliency_ratio_w = cut_saliency_ratio_w
- 
     max_cut_w = w-np.max(np.sum(count_saliency,axis=1))
-    max_cut_w += int(final_cut_saliency_ratio_w*(w-max_cut_w)) #允许裁剪掉0.1倍的显著物体
-
+    max_cut_w += int(final_cut_saliency_ratio_w*(w-max_cut_w)) 
     max_cut_h = h-np.max(np.sum(count_saliency,axis=0))
     max_cut_h += int(cut_saliency_ratio_h*(h-max_cut_h))
-    #max_cut_w = w
-    #max_cut_h = h
-    
-    print(image_name)
     
     ##########content aware seam carving##############
     img_name = image_name+'.png'
@@ -223,7 +203,6 @@ for img_name in image_name_list:
         new_w = int(src_w*target_ratio)
         src = src.transpose(1,0,2)
         extra_energy = extra_energy.transpose(1,0)
-
 
         if src_h-new_w>max_cut_h:#显著物体过大，只能裁剪小部分显
             new_w = int(src_h-max_cut_h)
@@ -268,22 +247,19 @@ for img_name in image_name_list:
         dst = Image.fromarray(dst)
         to_delete = Image.fromarray(to_delete)
 
-    dst.save('.//output//tmp_out//seamcarving//'+img_name)
-    to_delete.save('.//output//tmp_out//mask_images//seam_'+img_name)
+    dst.save(args.side_out_path+args.csc_out_path+img_name)
+    to_delete.save(args.side_out_path+args.mask_out_path+'seam_'+img_name)
     
     image = np.array(Image.open(image_file+img_name).convert('RGB'))
-    mask = np.array(Image.open('.//output//tmp_out//mask_images//seam_'+img_name))
+    mask = np.array(Image.open(args.side_out_path+args.mask_out_path+'seam_'+img_name))
     mask=~mask
     
-    #print(retarget_saliency.shape)
     retarget_saliency=saliency[mask].reshape((-1,new_w))
-    #print(retarget_saliency.shape)
     
-    
-    mask_image = image*np.expand_dims(mask,2).repeat(3,2)
-    mask_image = Image.fromarray(mask_image)
-    mask_image.save('.//output//tmp_out//mask_images//'+img_name)
-    h,w = H,W
+    #mask_image = image*np.expand_dims(mask,2).repeat(3,2)
+    #mask_image = Image.fromarray(mask_image)
+    #mask_image.save(args.side_out_path+args.mask_out_path+img_name)
+    #h,w = H,W
 
     if src_h/src_w > target_ratio:
         mask = mask.transpose(1,0)
@@ -292,18 +268,11 @@ for img_name in image_name_list:
     inpainting_mask = mask_tmp.copy()
 
 
-    def conv(lst1,lst2):
-        return (scipy.signal.convolve(lst1,lst2,mode='same')) 
-
     conv_kernel = [1 for i in range(25)]
     for i in range((inpainting_mask).shape[0]):
-        inpainting_mask[i] = conv(mask_tmp[i],conv_kernel)
+        inpainting_mask[i] = scipy.signal.convolve(mask_tmp[i],conv_kernel,mode='same')
         
     inpainting_mask = np.where(inpainting_mask>7,True,False)#周围25个像素有7个以上像素被删除，该位置需要inpainting
-    #if new_w>=200:
-    #    inpainting_mask = np.where(inpainting_mask>7,True,False)#周围25个像素有7个以上像素被删除，该位置需要inpainting
-    #if new_w<200:#图片像素过少，容易生成坏图，跳过生成
-    #    inpainting_mask = np.where(inpainting_mask>25,True,False)
 
     if src_h/src_w > target_ratio:
         if need_expand:
@@ -319,10 +288,7 @@ for img_name in image_name_list:
             left_part = np.ones((new_w,int(new_h-retarget_inpainting_mask.shape[1])//2+5))>0
             right_part = np.ones((new_w,int(new_h-retarget_inpainting_mask.shape[1]-left_part.shape[1]+10)))>0
             retarget_inpainting_mask = np.concatenate((left_part,retarget_inpainting_mask[:,5:src_w-5],right_part),axis=1)
-            #inpainting_mask_image = Image.fromarray(retarget_inpainting_mask)
-            #inpainting_mask_image.save('tmp2.png')
-            #retarget_saliency = retarget_saliency.transpose(1,0)
-            #new_retarget_saliency = np.concatenate((left_part,retarget_saliency[:,1:src_w-1],right_part),axis=1)
+
     else:
         if retarget_inpainting_mask.shape[0]<new_h:
             top_part = np.ones((int(new_h-retarget_inpainting_mask.shape[0])//2+5,new_w))>0
@@ -333,10 +299,7 @@ for img_name in image_name_list:
     
     (target_h,target_w) = retarget_inpainting_mask.shape
     inpainting_mask_image = Image.fromarray(retarget_inpainting_mask)
-    #inpainting_mask_image.save('tmp2.png')
-    dst = np.array(Image.open('.//output//tmp_out//seamcarving//'+img_name))
-    
-    
+    dst = np.array(Image.open(args.side_out_path+args.csc_out_path+img_name))
 
     if src_h/src_w > target_ratio:
         if need_expand:
@@ -375,14 +338,8 @@ for img_name in image_name_list:
     pred_image = images[0].resize((w,h))
 
     
-    def isblack(img):
-        #判断是否生成失败
-        img_array = np.array(img)
-        if img_array.sum()==0:
-            return True
-        return False
-    
-    if isblack(pred_image):
+    if np.array(pred_image).sum()==0:
+        #判断是否生成黑图，生成失败图像取消生成策略
         if src_h/src_w > target_ratio:
             new_h = src_w
             new_w = int(src_w*target_ratio)
@@ -403,7 +360,6 @@ for img_name in image_name_list:
                 energy_mode="forward" ,
                 aux_energy_rate = extra_energy
              )
-            
         
         if src_h/src_w > target_ratio:
             dst = Image.fromarray(dst)
@@ -439,6 +395,7 @@ for img_name in image_name_list:
     
     pred_image = pred_image.resize((target_w,target_h))
     pred_image.save(save_path+img_name)
+
 
 end_time = time.time()
 running_time = end_time-start_time
