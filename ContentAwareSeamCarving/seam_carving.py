@@ -211,65 +211,6 @@ def _get_seams(
 
 
 
-@nb.njit(
-    nb.float32[:, :, :](nb.float32[:, :, :], nb.boolean[:, :], nb.int32), cache=True
-)
-def _insert_seams_kernel(
-    src: np.ndarray, seams: np.ndarray, delta_width: int
-) -> np.ndarray:
-    """The numba kernel for inserting seams"""
-    src_h, src_w, src_c = src.shape
-    dst = np.empty((src_h, src_w + delta_width, src_c), dtype=src.dtype)
-    for row in range(src_h):
-        dst_col = 0
-        for src_col in range(src_w):
-            if seams[row, src_col]:
-                left = src[row, max(src_col - 1, 0)]
-                right = src[row, src_col]
-                dst[row, dst_col] = (left + right) / 2
-                dst_col += 1
-            dst[row, dst_col] = src[row, src_col]
-            dst_col += 1
-    return dst
-
-
-def _insert_seams(src: np.ndarray, seams: np.ndarray, delta_width: int) -> np.ndarray:
-    """Insert multiple seams into the source image"""
-    dst = src.astype(np.float32)
-    if dst.ndim == 2:
-        dst = dst[:, :, None]
-    dst = _insert_seams_kernel(dst, seams, delta_width).astype(src.dtype)
-    if src.ndim == 2:
-        dst = dst.squeeze(-1)
-    return dst
-
-
-def _expand_width(
-    src: np.ndarray,
-    delta_width: int,
-    energy_mode: str,
-    aux_energy: Optional[np.ndarray],
-    step_ratio: float,
-) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Expand the width of image by delta_width pixels"""
-    assert src.ndim in (2, 3) and delta_width >= 0
-    if not 0 < step_ratio <= 1:
-        raise ValueError(f"expect `step_ratio` to be between (0,1], got {step_ratio}")
-
-    dst = src
-    while delta_width > 0:
-        max_step_size = max(1, round(step_ratio * dst.shape[1]))
-        step_size = min(max_step_size, delta_width)
-        gray = dst if dst.ndim == 2 else _rgb2gray(dst)
-        seams = _get_seams(gray, step_size, energy_mode, aux_energy)
-        dst = _insert_seams(dst, seams, step_size)
-        if aux_energy is not None:
-            aux_energy = _insert_seams(aux_energy, seams, step_size)
-        delta_width -= step_size
-
-    return dst, aux_energy
-
-
 def _transpose_image(src: np.ndarray) -> np.ndarray:
     """Transpose a source image in rgb or grayscale format"""
     if src.ndim == 3:
@@ -277,9 +218,6 @@ def _transpose_image(src: np.ndarray) -> np.ndarray:
     else:
         dst = src.T
     return dst
-
-
-
 
 def _check_src(src: np.ndarray) -> np.ndarray:
     """Ensure the source to be RGB or grayscale"""
@@ -335,12 +273,8 @@ def content_aware_resize_width(
     assert width > 0
 
     src_w = src.shape[1]
-    if src_w < width:
-        dst, aux_energy = _expand_width(
-            src, width - src_w, energy_mode, aux_energy, step_ratio
-        )
-    else:
-        dst, aux_energy, to_delete = _reduce_width(src, src_w - width, energy_mode, aux_energy)
+    assert src_w>=width
+    dst, aux_energy, to_delete = _reduce_width(src, src_w - width, energy_mode, aux_energy)
     #print(to_delete)
     return dst, aux_energy, to_delete
 
@@ -384,7 +318,7 @@ def highlight_deleted_seam(
 
     aux_energy = None
     h,w,c =src.shape
-    resized_h,resized_w = int(size[0]), int(size[1])
+    #resized_h,resized_w = int(size[0]), int(size[1])
     #aux_energy = np.ones((h,w),dtype=np.float32)
     if aux_energy_rate is not None:
         aux_energy = aux_energy_rate*my_KEEP_MASK_ENERGY
@@ -401,12 +335,8 @@ def highlight_deleted_seam(
             src, aux_energy,to_delete = content_aware_resize_width(
                 src, width, energy_mode, aux_energy, step_ratio
             )
-            '''
-            src, aux_energy,to_delete2 = content_aware_resize_height(
-                src, height, energy_mode, aux_energy, step_ratio
-            )
-            '''
-    
+
     #print(src.shape)
 
     return src, to_delete
+
