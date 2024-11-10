@@ -1,7 +1,10 @@
 <div align="center">
 <h1>PruneRepaint (NeurIPS2024)</h1>
 <h3>Prune and Repaint: Content-Aware Image Retargeting for any Ratio</h3>
-Paper: ([arXiv:2410.22865](https://arxiv.org/abs/2410.22865))
+</div>
+
+<div align="center">
+Paper: (<a href="https://arxiv.org/abs/2410.22865/">arXiv:2410.22865</a>)
 </div>
 
 ## Introduction
