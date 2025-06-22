@@ -1,0 +1,16 @@
+diffusers==0.22.1
+huggingface_hub==0.25.2
+imageio==2.35.1
+numba==0.58.1
+numpy==1.22.0
+pillow==10.2.0
+safetensors==0.4.1
+scikit-image==0.21.0
+scipy==1.10.1
+tensorboardX==2.6.2.2
+torch==2.3.1
+torchaudio
+torchvision
+tqdm==4.66.4
+transformers==4.41.2
+timm
